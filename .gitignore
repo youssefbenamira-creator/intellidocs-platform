@@ -1,0 +1,50 @@
+# ── Dependencies ────────────────────────────────
+node_modules/
+**/node_modules/
+
+# ── Build output ────────────────────────────────
+**/dist/
+**/.next/
+**/build/
+*.tsbuildinfo
+
+# ── Python ──────────────────────────────────────
+**/__pycache__/
+*.py[cod]
+**/.venv/
+**/venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# ── Environment & secrets ───────────────────────
+.env
+**/.env
+.env.*
+!**/.env.example
+
+# ── Logs & temp ─────────────────────────────────
+*.log
+**/logs/
+tmp/
+
+# ── Docker / model caches & data volumes ────────
+hf_cache/
+qdrant_storage/
+ollama_data/
+postgres_data/
+
+# ── OS / editors ────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ── Claude / agent workspace ────────────────────
+.claude/
+
+# ── Report (ignore the whole folder) ────────────
+Report/
+
+# Absorbed nested repo (create-next-app scaffold), kept for safety
+**/.git.disabled/

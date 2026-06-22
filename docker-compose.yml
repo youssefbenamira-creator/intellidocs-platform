@@ -1,0 +1,163 @@
+version: '3.8'
+
+networks:
+  pfe_network:
+    driver: bridge
+
+services:
+  db:
+    image: postgres:15
+    container_name: pfe_postgres
+    environment:
+      POSTGRES_USER: pfe_user
+      POSTGRES_PASSWORD: pfe_password
+      POSTGRES_DB: pfe_db
+    ports:
+      - '5435:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - pfe_network
+    restart: unless-stopped
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pfe_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@pfe.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - '5050:80'
+    depends_on:
+      - db
+    networks:
+      - pfe_network
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    container_name: pfe_backend
+    environment:
+      DATABASE_URL: postgresql://pfe_user:pfe_password@db:5432/pfe_db?schema=public
+      JWT_SECRET: super-secret-key-for-development-only-change-in-prod
+      JWT_REFRESH_SECRET: super-secret-refresh-key
+      SCRAPER_URL: http://ai-scraper:8001
+      INTERNAL_API_KEY: internal-svc-key-change-in-prod
+      PORT: 3001
+    ports:
+      - '3001:3001'
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    depends_on:
+      - db
+    networks:
+      - pfe_network
+    restart: unless-stopped
+
+  prisma-studio:
+    build: ./backend
+    container_name: pfe_prisma_studio
+    environment:
+      DATABASE_URL: postgresql://pfe_user:pfe_password@db:5432/pfe_db?schema=public
+      HOST: 0.0.0.0
+    ports:
+      - '5555:5555'
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: npx prisma studio --port 5555 --browser none
+    depends_on:
+      - db
+    networks:
+      - pfe_network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:3001
+    container_name: pfe_frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+    ports:
+      - '3000:3000'
+    depends_on:
+      - backend
+    networks:
+      - pfe_network
+    restart: unless-stopped
+
+  tika:
+    image: apache/tika:2.9.1.0
+    container_name: pfe_tika
+    ports:
+      - '9998:9998'
+    networks:
+      - pfe_network
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.1
+    container_name: pfe_qdrant
+    ports:
+      - '6333:6333'
+      - '6334:6334'
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    networks:
+      - pfe_network
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: pfe_ollama
+    ports:
+      - '11434:11434'
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - pfe_network
+    restart: unless-stopped
+    # GPU acceleration (NVIDIA). Requires nvidia-container-toolkit on the host.
+    environment:
+      OLLAMA_KEEP_ALIVE: 5m
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  ai-scraper:
+    build: ./scraping/ai-service
+    container_name: pfe_ai_scraper
+    environment:
+      DATABASE_URL: postgresql://pfe_user:pfe_password@db:5432/pfe_db
+      NESTJS_URL: http://backend:3001
+      INTERNAL_API_KEY: internal-svc-key-change-in-prod
+      TIKA_URL: http://tika:9998
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_URL: http://ollama:11434
+      LLM_MODEL: qwen3:4b-instruct
+      HF_HOME: /hf_cache
+    ports:
+      - '8001:8001'
+    volumes:
+      - ./scraping/ai-service:/app
+      - hf_cache:/hf_cache
+    depends_on:
+      - db
+      - tika
+      - qdrant
+    networks:
+      - pfe_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  hf_cache:
+  qdrant_storage:
+  ollama_data:

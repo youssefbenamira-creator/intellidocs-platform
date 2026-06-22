@@ -1,0 +1,383 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  EXPERT
+  DECISION_MAKER
+}
+
+model User {
+  id                 Int      @id @default(autoincrement())
+  email              String   @unique
+  password           String
+  role               Role     @default(EXPERT)
+  isActive           Boolean  @default(true)
+  hashedRefreshToken String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  activityLogs      ActivityLog[]
+  scrapingJobs      ScrapingJob[]
+  uploadedDocuments UploadedDocument[]
+  sharesCreated     DocumentShare[]    @relation("SharesCreated")
+  sharesReceived    DocumentShare[]    @relation("SharesReceived")
+  notifications     Notification[]
+
+  // Unified content explorer
+  workspacesOwned      Workspace[]       @relation("WorkspaceOwner")
+  workspaceMemberships WorkspaceMember[]
+  assetsOwned          Asset[]           @relation("AssetOwner")
+  assetVersions        AssetVersion[]
+  assetPermissions     AssetPermission[] @relation("PermissionUser")
+  permissionsGranted   AssetPermission[] @relation("PermissionGrantedBy")
+  assetShares          AssetShare[]
+  assetActivities      AssetActivity[]
+  documentTemplates    DocumentTemplate[]
+}
+
+model ActivityLog {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  action      String
+  description String?
+  ipAddress   String?
+  timestamp   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id])
+}
+
+enum ScrapingMode {
+  ONE_TIME
+  CONTINUOUS
+}
+
+enum ScrapingStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  FAILED
+}
+
+model ScrapingJob {
+  id              Int            @id @default(autoincrement())
+  name            String?
+  createdById     Int
+  url             String?
+  targetCoins     String[]
+  attributes      String[]
+  mode            ScrapingMode   @default(ONE_TIME)
+  intervalSeconds Int?
+  status          ScrapingStatus @default(ACTIVE)
+  lastRunAt       DateTime?
+  createdAt       DateTime       @default(now())
+
+  createdBy User              @relation(fields: [createdById], references: [id])
+  results   ScrapingResult[]
+  documents ScrapedDocument[]
+
+  // Table-extraction schema applied to every page of this crawl (empty = auto)
+  templateId   String?
+  tableColumns String[]
+
+  // Links to the SCRAPED_SITE asset that represents this crawl in the explorer
+  assetId String? @unique
+  asset   Asset?  @relation(fields: [assetId], references: [id], onDelete: SetNull)
+}
+
+model ScrapedDocument {
+  id          Int      @id @default(autoincrement())
+  jobId       Int
+  url         String
+  title       String?
+  description String?
+  content      String
+  summary      String?
+  entities     Json?
+  keywords     String[]
+  tables       Json?
+  templateId   String?
+  tableColumns String[]
+  scrapedAt    DateTime @default(now())
+
+  job ScrapingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  // Links to the SCRAPED_PAGE asset in the explorer
+  assetId String? @unique
+  asset   Asset?  @relation(fields: [assetId], references: [id], onDelete: SetNull)
+}
+
+model UploadedDocument {
+  id            Int      @id @default(autoincrement())
+  uploadedById  Int
+  filename      String
+  mimeType      String
+  fileSize      Int
+  extractedText String   @default("")
+  title         String?
+  author        String?
+  pageCount     Int?
+  language      String?
+  summary       String?
+  entities      Json?
+  keywords      String[]
+  tables        Json?
+  templateId    String?
+  tableColumns  String[]
+  uploadedAt    DateTime @default(now())
+
+  uploadedBy User @relation(fields: [uploadedById], references: [id])
+
+  // Links to the FILE asset in the explorer
+  assetId String? @unique
+  asset   Asset?  @relation(fields: [assetId], references: [id], onDelete: SetNull)
+}
+
+model ScrapingResult {
+  id                Int         @id @default(autoincrement())
+  jobId             Int
+  coin              String
+  rank              Int?
+  price             Float?
+  marketCap         Float?
+  volume24h         Float?
+  percentChange24h  Float?
+  circulatingSupply Float?
+  scrapedAt         DateTime    @default(now())
+
+  job ScrapingJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+model DocumentShare {
+  id           Int      @id @default(autoincrement())
+  documentId   Int
+  documentType String   // "uploaded" | "scraped"
+  sharedById   Int
+  sharedWithId Int
+  message      String?
+  createdAt    DateTime @default(now())
+
+  sharedBy   User @relation("SharesCreated",  fields: [sharedById],   references: [id], onDelete: Cascade)
+  sharedWith User @relation("SharesReceived", fields: [sharedWithId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, documentType, sharedWithId])
+}
+
+model Notification {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  title     String
+  message   String
+  link      String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Unified Content Explorer (Drive-style asset model)
+// ───────────────────────────────────────────────────────────────────────────
+
+enum AssetType {
+  FILE
+  FOLDER
+  SCRAPED_PAGE
+  SCRAPED_SITE
+  GENERATED_DOCUMENT
+  DATASET
+}
+
+enum AssetStatus {
+  ACTIVE
+  TRASHED
+}
+
+enum PermissionLevel {
+  VIEWER
+  EDITOR
+  OWNER
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  ownerId   Int
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner      User              @relation("WorkspaceOwner", fields: [ownerId], references: [id])
+  members    WorkspaceMember[]
+  assets     Asset[]
+  tags       Tag[]
+  activities AssetActivity[]
+
+  @@index([ownerId])
+}
+
+model WorkspaceMember {
+  id          String          @id @default(cuid())
+  workspaceId String
+  userId      Int
+  level       PermissionLevel @default(VIEWER)
+  createdAt   DateTime        @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model Asset {
+  id          String      @id @default(cuid())
+  workspaceId String
+  ownerId     Int
+  parentId    String?
+  type        AssetType
+  name        String
+  // Materialized path of ancestor ids ("/<id>/<id>/") for O(1) subtree queries
+  path        String      @default("/")
+  depth       Int         @default(0)
+  mimeType    String?
+  sizeBytes   BigInt?
+  status      AssetStatus @default(ACTIVE)
+  trashedAt   DateTime?
+  metadata    Json?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  owner     User      @relation("AssetOwner", fields: [ownerId], references: [id])
+  parent    Asset?    @relation("AssetTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children  Asset[]   @relation("AssetTree")
+
+  // Type-specific detail rows (existing pipelines keep writing these)
+  uploadedDocument UploadedDocument?
+  scrapedDocument  ScrapedDocument?
+  scrapingJob      ScrapingJob?
+
+  versions    AssetVersion[]
+  permissions AssetPermission[]
+  shares      AssetShare[]
+  tags        AssetTag[]
+  activities  AssetActivity[]
+
+  @@index([workspaceId, parentId])
+  @@index([workspaceId, type])
+  @@index([workspaceId, status])
+  @@index([ownerId])
+  @@index([path])
+}
+
+model AssetVersion {
+  id            String   @id @default(cuid())
+  assetId       String
+  versionNumber Int
+  label         String?
+  sizeBytes     BigInt?
+  checksum      String?
+  storageRef    String?
+  createdById   Int
+  createdAt     DateTime @default(now())
+  metadata      Json?
+
+  asset     Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  createdBy User  @relation(fields: [createdById], references: [id])
+
+  @@unique([assetId, versionNumber])
+  @@index([assetId])
+}
+
+model AssetPermission {
+  id          String          @id @default(cuid())
+  assetId     String
+  userId      Int
+  level       PermissionLevel
+  grantedById Int
+  createdAt   DateTime        @default(now())
+
+  asset     Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  user      User  @relation("PermissionUser", fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy User  @relation("PermissionGrantedBy", fields: [grantedById], references: [id])
+
+  @@unique([assetId, userId])
+  @@index([userId])
+}
+
+model AssetShare {
+  id           String    @id @default(cuid())
+  assetId      String
+  token        String    @unique
+  passwordHash String?
+  expiresAt    DateTime?
+  revokedAt    DateTime?
+  createdById  Int
+  createdAt    DateTime  @default(now())
+
+  asset     Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  createdBy User  @relation(fields: [createdById], references: [id])
+
+  @@index([assetId])
+}
+
+model Tag {
+  id          String @id @default(cuid())
+  workspaceId String
+  name        String
+
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  assets    AssetTag[]
+
+  @@unique([workspaceId, name])
+}
+
+model AssetTag {
+  assetId String
+  tagId   String
+
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  tag   Tag   @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([assetId, tagId])
+  @@index([tagId])
+}
+
+model AssetActivity {
+  id          String   @id @default(cuid())
+  workspaceId String
+  assetId     String?
+  actorId     Int
+  action      String
+  detail      Json?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  asset     Asset?    @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  actor     User      @relation(fields: [actorId], references: [id])
+
+  @@index([workspaceId, createdAt])
+  @@index([assetId])
+}
+
+// Reusable table-extraction schema ("template") shared by similar documents.
+model DocumentTemplate {
+  id          String   @id @default(cuid())
+  ownerId     Int
+  workspaceId String?
+  name        String
+  description String?
+  columns     String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId])
+}

@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+# Cancel superseded runs on the same ref
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (NestJS)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true          # advisory until the codebase is lint-clean
+      - name: Unit tests
+        run: npm test -- --ci --passWithNoTests
+        continue-on-error: true          # advisory until the test suite is hardened
+      - name: Build
+        run: npm run build               # hard gate: TypeScript must compile
+
+  frontend:
+    name: Frontend (Next.js)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true
+      - name: Build
+        run: npm run build               # hard gate: type-check + bundle
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:3001
+
+  ai-service:
+    name: AI service (FastAPI)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scraping/ai-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      # The heavy ML stack (torch, transformers, FlagEmbedding) is multi-GB and is
+      # exercised in Docker, not here. CI validates syntax and style only.
+      - name: Lint (ruff)
+        run: |
+          pip install ruff
+          ruff check .
+        continue-on-error: true
+      - name: Syntax check
+        run: python -m compileall -q .   # hard gate: every module must compile
+
+  compose:
+    name: Docker Compose validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate docker-compose.yml
+        run: docker compose -f docker-compose.yml config -q
