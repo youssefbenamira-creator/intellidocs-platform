@@ -32,8 +32,7 @@ jobs:
         run: npm run lint
         continue-on-error: true          # advisory until the codebase is lint-clean
       - name: Unit tests
-        run: npm test -- --ci --passWithNoTests
-        continue-on-error: true          # advisory until the test suite is hardened
+        run: npm test -- --ci            # hard gate: unit tests must pass
       - name: Build
         run: npm run build               # hard gate: TypeScript must compile
 
@@ -71,7 +70,8 @@ jobs:
         with:
           python-version: '3.10'
       # The heavy ML stack (torch, transformers, FlagEmbedding) is multi-GB and is
-      # exercised in Docker, not here. CI validates syntax and style only.
+      # exercised in Docker, not here. CI validates syntax, style and the pure
+      # extraction/assistant helpers (which only need the lightweight web deps).
       - name: Lint (ruff)
         run: |
           pip install ruff
@@ -79,6 +79,10 @@ jobs:
         continue-on-error: true
       - name: Syntax check
         run: python -m compileall -q .   # hard gate: every module must compile
+      - name: Unit tests
+        run: |
+          pip install pytest fastapi pydantic httpx
+          python -m pytest tests/ -q     # hard gate: extraction/assistant helpers
 
   compose:
     name: Docker Compose validation
